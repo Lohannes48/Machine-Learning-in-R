@@ -1,0 +1,315 @@
+---
+title: "Your Document Title"
+author: "Document Author"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+---
+# Install Package for Text Mining
+
+```{r echo=FALSE, warning=FALSE}
+library(tidyverse)
+library(tm)
+library(e1071)
+library(ROCR)
+```
+
+# Read the Dataset
+
+```{r}
+data <- read.csv("twitter-airline-sentiment.csv", )
+
+head(data)
+```
+
+The dataset above is a dataset of comments published by people who have boarded the Virgin America airline. These comments have 3 types of properties, namely positive, negative, and neutral comments (in the text mining process below only uses positive and negative properties). The following is an explanation of the variables in the dataset:
+- tweet_id: Id twitter post number
+- airline_sentiment: classification of comment properties
+- airline_sentiment_confidence: trust in existing comments
+- negativereason: negative reasons
+- negativereason_confidence: belief in negative reasons that exist
+- airline: airline name
+- airline_sentiment_gold: trusted reviews from customers
+- name: username
+- negativereason_gold: trusted negative reviews from customers
+- retweet_count: number of retweets
+- text: comment or review
+- tweet_coord: number of posts
+- tweet_created: date the post was made
+- tweet_location: location of the user posting
+- user_timezone: when the user posts
+
+# Make New Dataframe for Text Mining
+
+```{r}
+data_new <- data %>% 
+  mutate("airline_sentiment" = as.character(airline_sentiment)) %>% 
+  filter(airline_sentiment == c("positive","negative"))
+
+data_new <- data_new %>% 
+  select("label" = airline_sentiment, "text" = text) %>% 
+  mutate("text" = as.character(text)) %>% 
+  mutate("label" = as.factor(label))
+
+data_new <- data_new[1:5000,]
+
+head(data_new, 10)
+```
+
+# CONVERT TEXT TO CORPUS
+
+```{r}
+data.corpus <- VCorpus(VectorSource(data_new$text))
+
+# Mengecek Kelas data
+class(data.corpus)
+
+# Mengambil salah satu contoh kasus
+data.corpus[[5]]
+
+data.corpus[[5]]$content
+```
+
+# TEXT PRE-PROCESSING
+
+## Change all words that use capital letters to lowercase
+
+```{r}
+data.corpus <- tm_map(data.corpus, content_transformer(tolower))
+
+data.corpus[[5]]$content
+```
+
+## Erase numbers and improve word order (in English)
+
+```{r}
+data.corpus <- tm_map(data.corpus, removeNumbers)
+
+data.corpus <- tm_map(data.corpus, removeWords, stopwords("english"))
+
+data.corpus[[5]]$content
+```
+
+## Erase unique symbols
+
+```{r}
+data.corpus <- tm_map(data.corpus, removePunctuation)
+
+data.corpus[[5]]$content
+```
+
+## Perform stemming on writing
+
+```{r}
+data.corpus <- tm_map(data.corpus, stemDocument)
+
+data.corpus[[5]]$content
+```
+
+## menghapus spasi kosong
+
+```{r}
+data.corpus <- tm_map(data.corpus, stripWhitespace)
+
+data.corpus[[5]]$content
+```
+
+
+# TOKENIZATION: CONVERT CORPUS TO DOCUMENT-TERM MATRIX
+
+```{r}
+data.dtm <- DocumentTermMatrix(data.corpus)
+data.dtm
+
+inspect(data.dtm)
+```
+
+
+# CROSS VALIDATION
+
+## After randomization, 75% of the data is used as a data train, and the remaining 25% is used as a test data
+
+```{r}
+set.seed(100)
+index <- sample(1 : nrow(data.dtm), 0.75 * nrow(data.dtm))
+
+# Split sms_dtm in 75-25 ratio, store it in 'sms_train' and 'sms_test'.
+data_train <- data.dtm[index,]
+data_test <- data.dtm[-index,]
+```
+
+```{r}
+train_label <- data_new[index,1]
+test_label <- data_new[-index,1]
+
+test_label <- as.factor(ifelse(test_label == "negative", 1, 0))
+```
+
+## Take unique words that exist in at least the first 20 sentences
+
+```{r}
+# All terms that appear in at least 20 documents. 
+data_freq <- findFreqTerms(data.dtm, 20)
+
+data_train <- data_train[,data_freq]
+data_test <- data_test[,data_freq]
+```
+
+## Matching the Bernoulli function
+
+```{r}
+bernoulli_conv <- function(x){
+  x <- as.factor(ifelse(x > 0, 1, 0))
+}
+```
+
+```{r}
+train_bn <- apply(data_train, 2, bernoulli_conv)
+test_bn <- apply(data_test, 2, bernoulli_conv)
+```
+
+
+# MODELLING
+
+## modeling with the 'naive bayes' method
+
+```{r}
+neg_model<- naiveBayes(x = train_bn, y = train_label, laplace = 1, )
+
+prob <- predict(neg_model, test_bn, type = "raw")
+
+neg.predict <- as.factor(ifelse(prob[,2] >= 0.5, 0, 1))
+```
+
+## Make a confusion matrix evaluation
+
+```{r}
+caret::confusionMatrix(data = neg.predict,
+                       reference = test_label,
+                       dnn = c("prediksi", "aktual"),
+                       positive = "1")
+```
+
+Interprestasi: Didapatkan hasil sebagai berikut, Accuracy berada pada 89%, recall 93% dan precision nya adalah 93%. Karena case dari dataset ini ingin dicari komentar negatif dibandingkan komentar positif nya, maka dianjurkan untuk menaikan treshold sehingga nilai recall (sensitivity) akan bertambah, sehingga akan mendapatkan prediksi komentar negatif yang lebih banyak.
+
+
+# ROC curve and AUC
+
+```{r}
+neg_prediction_raw <- predict(neg_model, test_bn, type = "raw")
+head(neg_prediction_raw)
+```
+
+```{r}
+neg_df <- data.frame("prediction" = neg_prediction_raw[,1], "trueclass"=as.numeric(test_label=="1"))
+head(neg_df)
+```
+
+```{r}
+neg_roc <- prediction(neg_df$prediction, neg_df$trueclass)  
+plot(performance(neg_roc, "tpr", "fpr"))
+```
+
+Interpretasi: dengan menetapkan treshold sebesar 0.5 didapatkan bentuk kurva ROC seperti diatas. kurva diatas menujukan bentuk kurva cukup baik, karena dengan menggeser sedikit recall, specificity nya hanya berkurang sedikit
+
+
+# Trial increase treshold to 0.6
+
+## modeling with the 'naive bayes' method
+
+```{r}
+neg_model2<- naiveBayes(x = train_bn, y = train_label, laplace = 1, )
+
+prob2 <- predict(neg_model2, test_bn, type = "raw")
+
+neg.predict2 <- as.factor(ifelse(prob2[,2] >= 0.6, 0, 1))
+```
+
+## Make a confusion matrix evaluation
+
+```{r}
+caret::confusionMatrix(data = neg.predict2,
+                       reference = test_label,
+                       dnn = c("prediksi", "aktual"),
+                       positive = "1")
+```
+
+Interpretation: After trying to increase the treshold to 0.6 Obtained the following results, Accuracy increased to 90%, recall increased to 95% and the precision was only slightly reduced to 92%. This shows that the increase in treshold to increase recall is very effective, because the increase in treshold to 0.6 increases accuracy and recall as well.
+
+
+# ROC curve and AUC
+
+```{r}
+neg_prediction_raw2 <- predict(neg_model2, test_bn, type = "raw")
+head(neg_prediction_raw2)
+```
+
+```{r}
+neg_df2 <- data.frame("prediction" = neg_prediction_raw2[,1], "trueclass"=as.numeric(test_label=="1"))
+head(neg_df2)
+```
+
+```{r}
+neg_roc2 <- prediction(neg_df2$prediction, neg_df2$trueclass)  
+plot(performance(neg_roc2, "tpr", "fpr"))
+```
+
+Interpretation: by setting a treshold of 0.6 the ROC curve is obtained as above. The curve above shows the shape of the curve is quite good, because by shifting a little recall, the specificity is only reduced slightly
+
+
+# Trial increase treshold to 0.6
+
+## modeling with the 'naive bayes' method
+
+```{r}
+neg_model3<- naiveBayes(x = train_bn, y = train_label, laplace = 1, )
+
+prob3 <- predict(neg_model3, test_bn, type = "raw")
+
+neg.predict3 <- as.factor(ifelse(prob3[,2] >= 0.7, 0, 1))
+```
+
+## Make a confusion matrix evaluation
+
+```{r}
+caret::confusionMatrix(data = neg.predict3,
+                       reference = test_label,
+                       dnn = c("prediksi", "aktual"),
+                       positive = "1")
+```
+
+Interpretation: After trying to increase the treshold to 0.7 Obtained the following results, Accuracy is still the same that is 89%, recall increased to 96% and the precision was reduced to 90%. This shows an increase in treshold to increase recall is quite effective, because an increase in treshold to 0.7 still produces the same accuracy and results in an increase in recall.
+
+
+# ROC curve and AUC
+
+```{r}
+neg_prediction_raw3 <- predict(neg_model3, test_bn, type = "raw")
+head(neg_prediction_raw3)
+```
+
+```{r}
+neg_df3 <- data.frame("prediction" = neg_prediction_raw3[,1], "trueclass"=as.numeric(test_label=="1"))
+head(neg_df3)
+```
+
+```{r}
+neg_roc3 <- prediction(neg_df3$prediction, neg_df3$trueclass)  
+plot(performance(neg_roc3, "tpr", "fpr"))
+```
+
+Interpretation: by setting a treshold of 0.7 we get the ROC curve shape as above. The curve above shows the shape of the curve is quite good, because by shifting a little recall, the specificity is only reduced slightly
+
+
+# CONCLUSION
+
+From 3 trials with different treshold, it can be concluded that the three points (0.5, 0.6 0.7) got pretty good results from the accuracy, recall, and precision assessment. but of the three points, the 0.6 treshold point is the most optimal treshold, because it has the highest accuracy level (90%) and recall (95%) as well, and does not reduce precision too much (92%).
+
+
+
+
+
+
+

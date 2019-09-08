@@ -1,0 +1,149 @@
+---
+title: "Untitled"
+author: "Lohannes"
+date: "8/8/2019"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data Wrangling
+
+## Install Library
+
+```{r}
+library(dplyr)
+library(GGally)
+library(car)
+library(lmtest)
+library(tidyverse)
+```
+
+## Read Dataset 'World-Happiness-Report-2019'
+
+```{r}
+hw <- read.csv("world-happiness-report-2019.csv")
+head(hw)
+```
+
+## Cleaning Dataset and Drop NA
+
+```{r}
+hw2 <- lapply(hw[,-c(1,2)],as.numeric) %>% 
+  as.data.frame()
+hw2 <- drop_na(hw2)
+colSums(is.na(hw2))
+```
+
+## Modeling and Look Outlier
+
+```{r}
+modelhw1 <- lm(Positive.affect ~., hw2)
+summary(modelhw1)
+plot(modelhw1)
+```
+
+## Look for Formula
+
+```{r}
+step(modelhw1, direction = "backward")
+```
+
+## Summarize Formula
+
+```{r}
+hw_reg <- lm(formula = Positive.affect ~ SD.of.Ladder + Negative.affect + 
+    Social.support + Freedom + Generosity, data = hw2)
+
+summary(hw_reg)
+```
+
+Remove the `Negative.affect` and` Generosity` predictors which are insignificant predictors, and get the results:
+
+```{r}
+hw_new <- lm(formula = Positive.affect ~ SD.of.Ladder + Social.support + Freedom, data = hw2)
+
+summary(hw_new)
+```
+
+### Linearity & Multicollinearity Test
+
+```{r}
+cor.test(hw2$Social.support, hw2$Positive.affect)
+cor.test(hw2$Generosity, hw2$Positive.affect)
+cor.test(hw2$Freedom, hw2$Positive.affect)
+cor.test(hw2$Negative.affect, hw2$Positive.affect)
+cor.test(hw2$Generosity, hw2$Positive.affect)
+```
+
+```{r}
+hw_reg1 <-  hw2[, c('Positive.affect',"Negative.affect",'SD.of.Ladder', 'Social.support', 'Freedom',"Generosity")]
+ggcorr(hw_reg1, label = T,label_size = 3)
+```
+
+```{r}
+hw_new1 <-  hw2[, c('Positive.affect','SD.of.Ladder', 'Social.support', 'Freedom')]
+ggcorr(hw_new1, label = T,label_size = 3)
+```
+
+## Normality Test
+
+```{r}
+vif(hw_reg)
+shapiro.test(hw_reg$residuals)
+bptest(hw_reg)
+```
+
+```{r}
+vif(hw_new)
+shapiro.test(hw_new$residuals)
+bptest(hw_new)
+```
+
+# Explanation
+
+## 1. From the process of finding a model to calculate the level of community happiness in each country, in terms of the 'Positive.affect' level which is calculated with various available predictors, including getting results:
+
+a. Primary Variable:
+- `Positive.affect` is influenced by` SD.of.Ladder` or the level of life that can be achieved by each community in a different country, where the small number of `SD.of.Ladder` also understands the number of` Positive.affect`
+- 'Positive.affect' is influenced by `Freedom 'or the level of freedom given by the government to its people, where a large number of' Freedom 'will affect an even greater' Positive.affect 'number
+- `Positive.affect` is influenced by` Social.support` or the level of social support provided by the government to its people, where the small number of `Social.support` also understands the value of` Positive.affect`
+
+b. Supporting variables:
+- `Positive.affect` is influenced by` Negative.affect` or negative emotions that exist in the community, where the variables `Positive.affect` and` Negative.affect` have inversely proportional properties, where if `Positive.affect` increases then` Negative ' .affect` goes down, and vice versa
+- `Positive.affect` is influenced by` Generosity` or the level of generosity that exists in the community, where a large number of `Generosity` will affect an even greater 'Positive.affect` number
+
+
+## 2. Carry out a feasibility test on the model that has been made, and compare the results of the feasibility test between model 1 (the basic model) and model 2 (the simplified model), the test is conducted using the Linearity, Multicolinearity, Heteroscedasticity, Normality, and obtaining methods results as follows:
+
+model 1: basic model (Positive.affect ~ SD.of.Ladder + Negative.affect + Social.support + Freedom + Generosity)
+
+- Multiple R-squared: 0.5472, Adjusted R-squared: 0.5303
+- SD.of.Ladder, Freedom, Social.support was noted as a significant variable. Negative.affect & Generosity are recorded as significant variables
+- cor test: Social.support p-value = 8.901e-08, Generosity p-value = 2.959e-07
+Freedom p-value <2.2e-16, Negative.affect p-value = 2.011e-05, Generosity p-value = 2.959e-07, all five variables get p-values below 0.05, indicating that they are recorded as significant variables
+- Normality test: SD.of.Ladder - 1.947020, Negative.affect - 2.222780 Social.support - 2.276327, Freedom - 1.570870, Generosity - 1.502879 (passed the test)
+- Shapiro test: p-value = 0.532 (passed the test)
+- BP test: p-value = 0.7028 (passed the test)
+
+model 2: simplified model (Positive.affect ~ SD.of.Ladder + Social.support + Freedom)
+
+- Multiple R-squared: 0.5317, Adjusted R-squared: 0.5214
+- SD.of.Ladder, Freedom, Social.support was noted as a significant variable.
+- cor test: Social.support p-value = 8.901e-08, Generosity p-value = 2.959e-07
+Freedom p-value <2.2e-16, all three variables get p-values below 0.05, indicating that they are recorded as significant variables
+- Normality test: SD.of.Ladder - 1.567095, Social.support - 1.905438, Freedom - 1.300738 (passed the test)
+- Shapiro test: p-value = 0.3751 (passed the test)
+- BP test: p-value = 0.7644 (passed the test)
+
+
+## 3. provide recommendations on models that have been made
+
+- after testing the feasibility of model 1 (Positive.affect ~ SD.of.Ladder + Negative.affect + Social.support + Freedom + Generosity) and model 2 (Positive.affect ~ SD.of.Ladder + Social.support + Freedom ), it can be concluded using model 2 will be more efficient and effective because the predictors used are simpler or simpler and will make it easier to do modeling.
+
+- the model obtained can also be carried out with a better feasibility test if there is more data collected.

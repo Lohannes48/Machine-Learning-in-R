@@ -1,0 +1,281 @@
+---
+title: "Your Document Title"
+author: "Document Author"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+---
+
+# Libraries and Setup
+
+```{r}
+library(tidyverse)
+library(inspectdf)
+library(caret)
+library(MASS)
+library(plotly)
+library(class)
+```
+
+# Turnover Classification Using Logistic Regression
+
+## Import Data
+
+```{r}
+nba <-  read.csv("nba_logreg.csv")
+
+head(nba)
+```
+
+```{r}
+glimpse(nba)
+```
+
+## Inspect Data
+
+Data turnover merupakan data tentang pemain basket suatu company yang terdiri dari 1329 observasi dan 21 variabel yang menjelas poin yang didapat tiap pemain dalam 1 permainan. Berikut penjelasan setiap variabel:
+
+Turnover data is data about a company's basketball players consisting of 1329 observations and 21 variables that explain points earned by each player in 1 game. Following is an explanation of each variable:
+
+$ Name         : Basketball player name
+$ GP           : total games played
+$ MIN          : average playing time in 1 game (in minutes)
+$ PTS          : average point gained in 1 game
+$ FGM          : points earned in the game
+$ FGA          : points earned in 1 game
+$ FG.          : points earned in the game (in percent)
+$ X3P.Made     : the number of three point shoots done
+$ X3PA         : number of three point shoots done (successful)
+$ X3P.         : number of three point shoots done (in percent)
+$ FTM          : number of free throw shoots done
+$ FTA          : number of free throw shoots (successful)
+$ FT.          : number of free throw shoots done (in percent)
+$ OREB         : number of offensive rebound shoots performed
+$ DREB         : the number of deffensive rebound shoots
+$ REB          : number of rebounds taken
+$ AST          : number of shoot assists
+$ STL          : number of steals made
+$ BLK          : number of blocks performed
+$ TOV          : number of turnovers made
+$ TARGET_5Yrs  : classification of players' playing time (1 = has experience playing above 5 years, 0 = has playing experience under 5 years)
+
+## Check missing value
+
+```{r}
+nba = nba %>% 
+  mutate(TARGET_5Yrs = as.factor(TARGET_5Yrs))
+```
+
+```{r}
+anyNA(nba)
+```
+
+```{r}
+colSums(is.na(nba))
+```
+
+```{r}
+nba = nba %>% 
+  drop_na()
+```
+
+```{r}
+nba_n = nba[,-1]
+```
+
+## Cross Validation
+
+```{r}
+set.seed(417)
+index <- sample(nrow(nba_n), nrow(nba_n)*0.7)
+train_nba <- nba_n[-index, ]
+test_nba <- nba_n[index, ]
+```
+
+## Check proportion of target variabel
+
+```{r}
+prop.table(table(train_nba$TARGET_5Yrs))
+```
+Because the proportion of the existing data train is balanced (39:61), there is no balancing process in the data train
+
+## Modelling from Data Train
+
+```{r}
+model1 <- glm(TARGET_5Yrs ~., train_nba, family = "binomial")
+
+summary(model1)
+```
+
+```{r}
+step(model1)
+```
+
+```{r}
+model2 <- glm(formula = TARGET_5Yrs ~ GP + MIN + FGA + X3P.Made + X3PA + 
+    FTM + DREB + REB + AST + BLK + TOV, family = "binomial", 
+    data = train_nba)
+
+summary(model2)
+```
+Interpretation:
+
+exemplified how to interpret one variable, namely `GP` (Game Played)
+```{r}
+exp(0.037260)
+```
+players who play 1x more tend to be more potential are players who have experience over 5 years by 1.03 times
+
+Of the 11 predictors used, all significant numerical predictors affecting potential are players who have experience over 5 years.
+
+## Predicting to Data Test
+
+```{r}
+test_nba$prob <- predict(model2, test_nba, type = "response")
+
+head(test_nba)
+```
+
+## Determines the threshold of the opportunity distribution
+
+```{r}
+hist(test_nba$prob)
+```
+The threshold value obtained is 0.5
+
+Try using the 0.5 threshold
+```{r}
+test_nba$predict <- as.factor(ifelse(test_nba$prob >= 0.5, 1, 0))
+
+head(test_nba)
+```
+
+## Evaluating
+
+Positive class in this case is 1 = yes (above 5 years)
+```{r}
+confusionMatrix(test_nba$predict, test_nba$TARGET_5Yrs, positive = "1")
+```
+
+```{r}
+performa <- function(cutoff, prob, ref, postarget, negtarget) 
+{
+  predict <- factor(ifelse(prob >= cutoff, postarget, negtarget))
+  conf <- caret::confusionMatrix(predict , ref, positive = postarget)
+  acc <- conf$overall[1]
+  rec <- conf$byClass[1]
+  prec <- conf$byClass[3]
+  spec <- conf$byClass[2]
+  mat <- t(as.matrix(c(rec , acc , prec, spec))) 
+  colnames(mat) <- c("recall", "accuracy", "precicion", "specificity")
+  return(mat)
+}
+
+co <- seq(0.01,0.80,length=100)
+result <- matrix(0,100,4)
+
+for(i in 1:100){
+  result[i,] = performa(cutoff = co[i], 
+                     prob = test_nba$prob, 
+                     ref = test_nba$predict, 
+                     postarget = "1", 
+                     negtarget = "0")
+}
+
+ggplotly(data_frame("Recall" = result[,1],
+           "Accuracy" = result[,2],
+           "Precision" = result[,3],
+           "Specificity" = result[,4],
+                   "Cutoff" = co) %>% 
+  gather(key = "performa", value = "value", 1:4) %>% 
+  ggplot(aes(x = Cutoff, y = value, col = performa)) +
+  geom_line(lwd = 1.5) +
+  scale_color_manual(values = c("darkred","darkgreen","orange", "blue")) +
+  scale_y_continuous(breaks = seq(0,1,0.1), limits = c(0,1)) +
+  scale_x_continuous(breaks = seq(0,1,0.1)) +
+  labs(title = "Tradeoff model perfomance") +
+  theme_minimal() +
+  theme(legend.position = "top",
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank()))
+```
+
+Because in this case we are more concerned with Precision (Pos Pred Value) so that analysts can choose professional players who have experience over 5 years and reduce costs (financial and time) to train new players, we will try to use the 0.6 threshold with consideration of keeping other matrices sup not go down too significantly
+
+```{r}
+test_nba$predict2 <- as.factor(ifelse(test_nba$prob >= 0.6, 1, 0))
+
+head(test_nba)
+```
+
+```{r}
+confusionMatrix(test_nba$predict2, test_nba$TARGET_5Yrs, positive = "1")
+```
+the pred value heading increased from 74% to 78% and accuracy did not decrease much, from 71% to 70%
+
+
+# Turnover Classification Using KNN
+
+## Scaling
+
+scaling with a scale function
+```{r}
+nba2 <- nba_n %>% 
+  mutate_if(is.numeric, scale)
+```
+
+check scaling results
+```{r}
+range(nba2[, 1:19])
+```
+
+## Cross Validation
+
+```{r}
+index2 <- sample(nrow(nba2), nrow(nba2)*0.7)
+train_nba2 <- nba2[index2, ]
+test_nba2 <- nba2[-index2, ]
+```
+
+## Modeling 
+
+k = 35
+```{r}
+#sqrt(1329) = 36
+
+pred_knn <- knn(train = train_nba2[, -20],
+                test = test_nba2[, -20], 
+                cl = train_nba2$TARGET_5Yrs, 
+                k = 35)
+```
+
+k = 37
+```{r}
+pred_knn2 <- knn(train = train_nba2[, -20],
+                test = test_nba2[, -20], 
+                cl = train_nba2$TARGET_5Yrs, 
+                k = 37)
+```
+
+## Evaluating
+
+Positive class in this case is 1 = yes (above 5 years)
+
+k = 35
+```{r}
+confusionMatrix(pred_knn2, test_nba2$TARGET_5Yrs, positive = "1")
+```
+
+K = 37
+```{r}
+confusionMatrix(pred_knn, test_nba2$TARGET_5Yrs, positive = "1")
+```
+
+# Conclusion
+
+using k = 35 is better because accuracy and precision are higher than k = 37
+
+
+
